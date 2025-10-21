@@ -1,4 +1,4 @@
-# Shop DB Query Optimization Documentation (written by AI)
+# Shop DB Query Optimization Documentation (written by AI based on my notes)
 
 ## 1\. Overview
 
@@ -119,7 +119,7 @@ WITH OrderDetails AS (
     JOIN Categories cat ON p.category_id = cat.category_id
 )
 -- 2. Main query
-SELECT /*+ SUBQUERY(MATERIALIZATION) */  -- Optimizer hint to materialize the CTE
+SELECT /*+ SUBQUERY(MATERIALIZATION) */
        c.customer_id,
        c.first_name,
        c.last_name,
@@ -127,22 +127,22 @@ SELECT /*+ SUBQUERY(MATERIALIZATION) */  -- Optimizer hint to materialize the CT
        c.city,
        c.registration_date,
        c.is_premium,
-       c.total_spent, -- 3. Select the pre-calculated column (FAST)
+       c.total_spent, 
        (SELECT COUNT(*)
         FROM Orders o
         WHERE o.customer_id = c.customer_id AND
               o.status LIKE 'Delivered') AS completed_orders,
        (SELECT GROUP_CONCAT(DISTINCT od.product_name SEPARATOR ', ')
-        FROM OrderDetails od -- 4. Query the CTE (FAST)
+        FROM OrderDetails od
         WHERE od.customer_id = c.customer_id) AS products_bought,
        (SELECT GROUP_CONCAT(DISTINCT od.category_name SEPARATOR ', ')
-        FROM OrderDetails od -- 5. Query the CTE again (FAST)
+        FROM OrderDetails od 
         WHERE od.customer_id = c.customer_id) AS categories_bought
-FROM Customers AS c USE INDEX (idx_customers_total_spent) -- 6. Hint to use the new index
+FROM Customers AS c USE INDEX (idx_customers_total_spent)
 WHERE c.registration_date > '2000-01-01'
-  AND c.total_spent > 1000 -- 7. Filter on the indexed column (FAST)
-  AND EXISTS (SELECT 1 FROM OrderDetails od WHERE od.customer_id = c.customer_id AND od.is_many) -- 8. EXISTS on CTE (FAST)
-ORDER BY c.total_spent DESC -- 9. Sort on the indexed column (VERY FAST)
+  AND c.total_spent > 1000 
+  AND EXISTS (SELECT 1 FROM OrderDetails od WHERE od.customer_id = c.customer_id AND od.is_many) 
+ORDER BY c.total_spent DESC
 LIMIT 10000;
 ```
 
@@ -153,21 +153,3 @@ LIMIT 10000;
   * **Consolidated Joins**: The `OrderDetails` CTE performs the expensive joins across four tables *once*. The main query then references this in-memory result multiple times, eliminating redundant join operations.
   * **Clarity**: The query is easier to read and maintain.
 
------
-
-## 5\. Maintenance Considerations
-
-**This optimization introduces a new requirement**: The `Customers.total_spent` column is denormalized and will become **stale** as new orders are placed or existing orders are modified.
-
-To keep this data accurate, one of the following methods must be implemented:
-
-1.  **Database Triggers (Recommended)**:
-
-      * Create `AFTER INSERT`, `AFTER UPDATE`, and `AFTER DELETE` triggers on the `Orders` and/or `OrderItems` tables.
-      * These triggers would automatically recalculate and update the `Customers.total_spent` value for the affected customer(s) in real-time. This ensures data is always consistent.
-
-2.  **Scheduled Job (Simpler)**:
-
-      * Create a stored procedure that re-runs the `UPDATE Customers ...` script.
-      * Use a database event scheduler (like MySQL Event Scheduler) to run this procedure periodically (e.g., every night).
-      * This is simpler to implement but means the `total_spent` data may be stale for up to 24 hours.
